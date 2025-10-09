@@ -1,4 +1,3 @@
-// src/index.js
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
@@ -10,31 +9,27 @@ const crypto = require("crypto");
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// Config via env
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 const API_KEY = process.env.API_KEY || null; // optional
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
 const TMP_DIR = process.env.TMP_DIR || "/tmp";
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || "2", 10);
 
-// CORS: allowlist, or allow all if none provided (private use)
 if (CORS_ORIGINS.length > 0) {
   app.use(cors({ origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // allow curl / non-browser
+    if (!origin) return cb(null, true);
     return CORS_ORIGINS.includes(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS"));
   }}));
 } else {
   app.use(cors());
 }
 
-// Basic rate limiter (protect from abuse)
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // <== tune for your private usage
+  windowMs: 60 * 1000,
+  max: 10,
 });
 app.use(limiter);
 
-// Simple concurrency guard
 let currentJobs = 0;
 
 function validateYouTubeUrl(urlString) {
@@ -55,7 +50,6 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.post("/api/convert", async (req, res) => {
   try {
-    // API key check (optional)
     if (API_KEY && req.body.apiKey !== API_KEY) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -72,9 +66,7 @@ app.post("/api/convert", async (req, res) => {
 
     const prefix = uniquePrefix();
     const outPattern = path.join(TMP_DIR, `${prefix}.%(ext)s`); // yt-dlp will expand ext
-    // yt-dlp args: -x extract audio, --audio-format mp3, -o output pattern
     const args = ["-x", "--audio-format", "mp3", "-o", outPattern, url, "--no-playlist", "--no-warnings", "--no-call-home", "--no-progress"];
-    // NOTE: --no-progress avoids heavy verbose output; you can enable --newline and parse if you want progress
 
     const ytdlp = spawn("yt-dlp", args);
 
@@ -95,7 +87,6 @@ app.post("/api/convert", async (req, res) => {
             return res.status(500).json({ error: "Conversion failed", details: stderr.slice(0, 1000) });
           }
 
-          // find the generated file for this prefix (mp3)
           const files = fs.readdirSync(TMP_DIR);
           const match = files.find(f => f.startsWith(prefix) && f.toLowerCase().endsWith(".mp3"));
           if (!match) {
@@ -107,9 +98,7 @@ app.post("/api/convert", async (req, res) => {
           const filePath = path.join(TMP_DIR, match);
           const stat = fs.statSync(filePath);
 
-          // stream file to client
           res.setHeader("Content-Type", "audio/mpeg");
-          // Content-Disposition uses a safer filename
           const safeName = (match.replace(/\s+/g, "_"));
           res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
           res.setHeader("Content-Length", stat.size);
@@ -118,7 +107,6 @@ app.post("/api/convert", async (req, res) => {
           readStream.pipe(res);
 
           readStream.on("close", () => {
-            // cleanup
             try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
             currentJobs = Math.max(0, currentJobs - 1);
           });
@@ -138,10 +126,8 @@ app.post("/api/convert", async (req, res) => {
       })();
     });
 
-    // If client disconnects early, try to kill yt-dlp and cleanup
     req.on("close", () => {
       if (!res.writableEnded) {
-        // kill the yt-dlp process (best effort)
         try { ytdlp.kill("SIGKILL"); } catch (e) {}
       }
     });
